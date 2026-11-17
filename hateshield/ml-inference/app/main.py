@@ -7,7 +7,7 @@ Audio/video are transcribed (Whisper) then scored as text.
 import os
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 app = FastAPI(title="ml-inference")
@@ -46,15 +46,15 @@ def analyze(req: AnalyzeRequest):
     transcript = None
     if req.content_type == "text":
         if not req.text:
-            return {"error": "text required"}, 400
+            raise HTTPException(status_code=400, detail="text required")
         text = req.text
     elif req.content_type in ("audio", "video"):
         if not req.media_url:
-            return {"error": "media_url required"}, 400
+            raise HTTPException(status_code=400, detail="media_url required")
         transcript = transcribe(req.media_url)
         text = transcript
     else:
-        return {"error": f"unknown content_type {req.content_type}"}, 400
+        raise HTTPException(status_code=400, detail=f"unknown content_type {req.content_type}")
 
     scores = classify_text(text)
     threshold = float(os.getenv("FLAG_THRESHOLD", "0.5"))
