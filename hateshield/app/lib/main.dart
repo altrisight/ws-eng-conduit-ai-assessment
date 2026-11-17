@@ -113,12 +113,31 @@ class _QueuePageState extends State<QueuePage> {
     }
   }
 
+  bool _submitting = false;
+
   Future<void> _verdict(String postId, String label) async {
-    await http.post(
-      Uri.parse('$apiBase/v1/feedback'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'post_id': postId, 'label': label}),
-    );
+    if (_submitting) return; // prevent duplicate/conflicting labels per double-click
+    setState(() => _submitting = true);
+    try {
+      final resp = await http.post(
+        Uri.parse('$apiBase/v1/feedback'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'post_id': postId, 'label': label}),
+      );
+      if (resp.statusCode >= 400 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Verdict failed: HTTP ${resp.statusCode}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Verdict failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
     await _refresh();
   }
 
@@ -136,13 +155,17 @@ class _QueuePageState extends State<QueuePage> {
     return RefreshIndicator(
       onRefresh: _refresh,
       child: _items.isEmpty
-          ? ListView(children: [
-              Padding(
-                padding: const EdgeInsets.all(32),
-                child: Center(child: Text(_busy ? 'Loading…' : 'No pending items')),
-              ),
-            ])
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Center(child: Text(_busy ? 'Loading…' : 'No pending items')),
+                ),
+              ],
+            )
           : ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
               itemCount: _items.length,
               itemBuilder: (context, i) {
                 final it = _items[i] as Map<String, dynamic>;
