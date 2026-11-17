@@ -48,16 +48,24 @@ class AnalyzePage extends StatefulWidget {
 
 class _AnalyzePageState extends State<AnalyzePage> {
   final _controller = TextEditingController();
+  final _mediaController = TextEditingController();
+  String _contentType = 'text';
   String? _result;
   bool _busy = false;
 
   Future<void> _analyze() async {
     setState(() { _busy = true; _result = null; });
+    final body = <String, String>{'content_type': _contentType};
+    if (_contentType == 'text') {
+      body['text'] = _controller.text;
+    } else {
+      body['media_url'] = _mediaController.text;
+    }
     try {
       final resp = await http.post(
         Uri.parse('$apiBase/v1/analyze'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'content_type': 'text', 'text': _controller.text}),
+        body: jsonEncode(body),
       );
       setState(() => _result = resp.body);
     } catch (e) {
@@ -71,14 +79,33 @@ class _AnalyzePageState extends State<AnalyzePage> {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.all(16),
         child: Column(children: [
-          TextField(
-            controller: _controller,
-            maxLines: 4,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'Paste a social media post…',
-            ),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'text', label: Text('Text')),
+              ButtonSegment(value: 'audio', label: Text('Audio')),
+              ButtonSegment(value: 'video', label: Text('Video')),
+            ],
+            selected: {_contentType},
+            onSelectionChanged: (s) => setState(() => _contentType = s.first),
           ),
+          const SizedBox(height: 12),
+          if (_contentType == 'text')
+            TextField(
+              controller: _controller,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Paste a social media post…',
+              ),
+            )
+          else
+            TextField(
+              controller: _mediaController,
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                hintText: 'https://…/media.${_contentType == 'audio' ? 'mp3' : 'mp4'}',
+              ),
+            ),
           const SizedBox(height: 12),
           FilledButton(
             onPressed: _busy ? null : _analyze,

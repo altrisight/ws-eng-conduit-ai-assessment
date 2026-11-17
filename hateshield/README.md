@@ -15,6 +15,10 @@ Multimodal hate-speech detection: social posts, audio, and video.
 
 ## Dev
 
+Copy `.env.example` to `.env` and set `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`,
+`MINIO_ROOT_PASSWORD` (compose refuses to start without them). Optional:
+`MODERATION_TOKEN` / `FEEDBACK_TOKEN` add bearer auth to those services.
+
 ```bash
 docker compose up --build
 # gateway on :8080
