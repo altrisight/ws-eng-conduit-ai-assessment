@@ -1,10 +1,14 @@
 """ML inference service: text/audio/video hate-speech scoring.
 
-Baseline implementation: a pluggable text classifier interface. Swap
-`classify_text` for a fine-tuned transformer (e.g. XLM-R) once trained.
-Audio/video are transcribed (Whisper) then scored as text.
+Text is scored by a HuggingFace classifier (`MODEL_NAME`, default
+cardiffnlp/twitter-roberta-base-hate). Audio/video are transcribed with
+Whisper then scored as text. Both models load lazily on first use; if the
+dependencies are not installed the service falls back to a stub so the
+pipeline still works for bring-up.
 """
 import os
+import threading
+from functools import lru_cache
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -12,8 +16,7 @@ from pydantic import BaseModel
 
 app = FastAPI(title="ml-inference")
 
-# Placeholder lexicon — replace with a real model in classify_text().
-HATE_TERMS = {"hate", "kill", "subhuman"}  # stub, for pipeline bring-up only
+MODEL_NAME = os.getenv("MODEL_NAME", "cardiffnlp/twitter-roberta-base-hate")
 
 
 class AnalyzeRequest(BaseModel):
@@ -23,17 +26,57 @@ class AnalyzeRequest(BaseModel):
     post_id: Optional[str] = None
 
 
+@lru_cache(maxsize=1)
+def _text_classifier():
+    from transformers import pipeline  # heavy import, deferred
+
+    return pipeline("text-classification", model=MODEL_NAME)
+
+
+_whisper_lock = threading.Lock()
+
+
+@lru_cache(maxsize=1)
+def _whisper_model():
+    import whisper
+
+    return whisper.load_model(os.getenv("WHISPER_MODEL", "base"))
+
+
 def classify_text(text: str) -> dict:
-    """Return per-category scores in [0,1]. Replace with model inference."""
-    tokens = set(text.lower().split())
-    hits = len(tokens & HATE_TERMS)
-    score = min(1.0, hits * 0.4)
-    return {"hate": score}
+    """Return per-category scores in [0,1]."""
+    try:
+        clf = _text_classifier()
+    except ImportError:
+        # Stub for bring-up when transformers isn't installed.
+        tokens = set(text.lower().split())
+        hits = len(tokens & {"hate", "kill", "subhuman"})
+        return {"hate": min(1.0, hits * 0.4)}
+
+    result = clf(text, truncation=True, max_length=512)[0]
+    # cardiffnlp model labels: LABEL_0 = non-hate, LABEL_1 = hate
+    label = result["label"].lower()
+    if label in ("hate", "label_1"):
+        return {"hate": float(result["score"])}
+    return {"hate": float(1.0 - result["score"])}
 
 
 def transcribe(media_url: str) -> str:
-    """Transcribe audio/video via Whisper. Stub until model is wired in."""
-    raise NotImplementedError("Whisper transcription not yet configured")
+    """Transcribe audio/video via Whisper. Only http(s) URLs are accepted so
+    callers cannot read local files or internal-only endpoints."""
+    if not media_url.startswith(("https://", "http://")):
+        raise HTTPException(status_code=400, detail="media_url must be an http(s) URL")
+    try:
+        import whisper  # noqa: F401
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="Whisper not installed; audio/video transcription unavailable",
+        ) from exc
+    # Whisper's kv-cache hooks are request-scoped on shared decoder layers, so
+    # concurrent transcriptions on one model corrupt each other — serialize.
+    with _whisper_lock:
+        return _whisper_model().transcribe(media_url)["text"]
 
 
 @app.get("/healthz")

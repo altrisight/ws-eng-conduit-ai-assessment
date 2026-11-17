@@ -1,6 +1,6 @@
 fastapi>=0.110
 uvicorn>=0.29
-# add when wiring real models:
-# torch
-# transformers
+torch
+transformers
+# optional, for audio/video transcription:
 # openai-whisper
