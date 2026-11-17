@@ -1,11 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 )
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+var feedbackURL = env("FEEDBACK_URL", "http://localhost:8083")
 
 type QueueItem struct {
 	PostID  string             `json:"post_id"`
@@ -63,6 +74,15 @@ func submitFeedback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	mu.Unlock()
+
+	// Record the verdict as a training label in feedback-service.
+	label, _ := json.Marshal(map[string]string{
+		"post_id": fb.PostID,
+		"label":   fb.Label,
+		"source":  "moderator",
+	})
+	go http.Post(feedbackURL+"/v1/labels", "application/json", bytes.NewReader(label))
+
 	w.WriteHeader(http.StatusAccepted)
 }
 
