@@ -72,7 +72,12 @@ func analyze(w http.ResponseWriter, r *http.Request) {
 				"post_id": postID,
 				"scores":  result.Scores,
 			})
-			go http.Post(moderationURL+"/v1/queue", "application/json", bytes.NewReader(item))
+			req, _ := http.NewRequest("POST", moderationURL+"/v1/queue", bytes.NewReader(item))
+			req.Header.Set("Content-Type", "application/json")
+			if t := os.Getenv("MODERATION_TOKEN"); t != "" {
+				req.Header.Set("Authorization", "Bearer "+t)
+			}
+			go http.DefaultClient.Do(req)
 		}
 	}
 

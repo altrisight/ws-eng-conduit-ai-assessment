@@ -6,10 +6,13 @@ Whisper then scored as text. Both models load lazily on first use; if the
 dependencies are not installed the service falls back to a stub so the
 pipeline still works for bring-up.
 """
+import ipaddress
 import os
+import socket
 import threading
 from functools import lru_cache
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -66,6 +69,15 @@ def transcribe(media_url: str) -> str:
     callers cannot read local files or internal-only endpoints."""
     if not media_url.startswith(("https://", "http://")):
         raise HTTPException(status_code=400, detail="media_url must be an http(s) URL")
+    host = urlparse(media_url).hostname or ""
+    try:
+        addrs = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail="media_url host cannot be resolved")
+    for info in addrs:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            raise HTTPException(status_code=400, detail="media_url must be a public URL")
     try:
         import whisper  # noqa: F401
     except ImportError as exc:

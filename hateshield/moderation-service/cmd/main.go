@@ -18,6 +18,12 @@ func env(key, fallback string) string {
 
 var feedbackURL = env("FEEDBACK_URL", "http://localhost:8083")
 
+// When set, /v1/* endpoints require "Authorization: Bearer <token>".
+var authToken = os.Getenv("MODERATION_TOKEN")
+
+// JSONL file persisting queue state across restarts; empty = memory only.
+var queuePath = os.Getenv("QUEUE_PATH")
+
 type QueueItem struct {
 	PostID  string             `json:"post_id"`
 	Scores  map[string]float64 `json:"scores"`
@@ -33,6 +39,59 @@ var (
 	mu    sync.Mutex
 	queue = map[string]*QueueItem{}
 )
+
+func persist(it *QueueItem) error {
+	if queuePath == "" {
+		return nil
+	}
+	f, err := os.OpenFile(queuePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := json.NewEncoder(f).Encode(it); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// loadQueue replays the JSONL log; later records for a post_id win.
+func loadQueue() {
+	if queuePath == "" {
+		return
+	}
+	data, err := os.ReadFile(queuePath)
+	if err != nil {
+		return
+	}
+	lines := bytes.Split(data, []byte("\n"))
+	// A truncated final line (partial append) would join the next write to it;
+	// cut the file back to the last complete line.
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		lastNL := bytes.LastIndex(data, []byte("\n"))
+		os.Truncate(queuePath, int64(lastNL+1))
+		lines = lines[:len(lines)-1]
+	}
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		var it QueueItem
+		if json.Unmarshal(line, &it) == nil {
+			queue[it.PostID] = &it
+		}
+	}
+}
+
+func requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if authToken != "" && r.Header.Get("Authorization") != "Bearer "+authToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
 
 func listQueue(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
@@ -54,6 +113,11 @@ func enqueue(w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	it.Status = "pending"
+	if err := persist(it); err != nil {
+		mu.Unlock()
+		http.Error(w, "queue storage unavailable", http.StatusInternalServerError)
+		return
+	}
 	queue[it.PostID] = &it
 	mu.Unlock()
 	w.WriteHeader(http.StatusCreated)
@@ -72,6 +136,11 @@ func submitFeedback(w http.ResponseWriter, r *http.Request) {
 		} else {
 			it.Status = "rejected"
 		}
+		if err := persist(it); err != nil {
+			mu.Unlock()
+			http.Error(w, "queue storage unavailable", http.StatusInternalServerError)
+			return
+		}
 	}
 	mu.Unlock()
 
@@ -81,19 +150,26 @@ func submitFeedback(w http.ResponseWriter, r *http.Request) {
 		"label":   fb.Label,
 		"source":  "moderator",
 	})
-	go http.Post(feedbackURL+"/v1/labels", "application/json", bytes.NewReader(label))
+	req, _ := http.NewRequest("POST", feedbackURL+"/v1/labels", bytes.NewReader(label))
+	req.Header.Set("Content-Type", "application/json")
+	if t := os.Getenv("FEEDBACK_TOKEN"); t != "" {
+		req.Header.Set("Authorization", "Bearer "+t)
+	}
+	go http.DefaultClient.Do(req)
 
 	w.WriteHeader(http.StatusAccepted)
 }
 
 func main() {
+	loadQueue()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("GET /v1/queue", listQueue)
-	mux.HandleFunc("POST /v1/queue", enqueue)
-	mux.HandleFunc("POST /v1/feedback", submitFeedback)
+	mux.HandleFunc("GET /v1/queue", requireAuth(listQueue))
+	mux.HandleFunc("POST /v1/queue", requireAuth(enqueue))
+	mux.HandleFunc("POST /v1/feedback", requireAuth(submitFeedback))
 
 	log.Println("moderation-service listening on :8082")
 	log.Fatal(http.ListenAndServe(":8082", mux))

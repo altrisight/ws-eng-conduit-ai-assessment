@@ -10,6 +10,19 @@ import (
 
 var labelsPath = os.Getenv("LABELS_PATH")
 
+// When set, /v1/* endpoints require "Authorization: Bearer <token>".
+var authToken = os.Getenv("FEEDBACK_TOKEN")
+
+func requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if authToken != "" && r.Header.Get("Authorization") != "Bearer "+authToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 type Label struct {
 	PostID  string `json:"post_id"`
 	Label   string `json:"label"`
@@ -53,8 +66,8 @@ func main() {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("POST /v1/labels", collect)
-	mux.HandleFunc("GET /v1/labels/export", export)
+	mux.HandleFunc("POST /v1/labels", requireAuth(collect))
+	mux.HandleFunc("GET /v1/labels/export", requireAuth(export))
 
 	log.Println("feedback-service listening on :8083")
 	log.Fatal(http.ListenAndServe(":8083", mux))
