@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -63,8 +64,12 @@ func analyze(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode == http.StatusOK {
 		var result AnalyzeResponse
 		if json.Unmarshal(respBody, &result) == nil && result.Flagged {
+			postID := result.PostID
+			if postID == "" {
+				postID = fmt.Sprintf("post-%d", time.Now().UnixNano())
+			}
 			item, _ := json.Marshal(map[string]any{
-				"post_id": result.PostID,
+				"post_id": postID,
 				"scores":  result.Scores,
 			})
 			go http.Post(moderationURL+"/v1/queue", "application/json", bytes.NewReader(item))
