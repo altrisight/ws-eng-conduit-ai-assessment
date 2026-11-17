@@ -1,10 +1,13 @@
 """ML inference service: text/audio/video hate-speech scoring.
 
-Baseline implementation: a pluggable text classifier interface. Swap
-`classify_text` for a fine-tuned transformer (e.g. XLM-R) once trained.
-Audio/video are transcribed (Whisper) then scored as text.
+Text is scored by a HuggingFace classifier (`MODEL_NAME`, default
+cardiffnlp/twitter-roberta-base-hate). Audio/video are transcribed with
+Whisper then scored as text. Both models load lazily on first use; if the
+dependencies are not installed the service falls back to a stub so the
+pipeline still works for bring-up.
 """
 import os
+from functools import lru_cache
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -12,8 +15,7 @@ from pydantic import BaseModel
 
 app = FastAPI(title="ml-inference")
 
-# Placeholder lexicon — replace with a real model in classify_text().
-HATE_TERMS = {"hate", "kill", "subhuman"}  # stub, for pipeline bring-up only
+MODEL_NAME = os.getenv("MODEL_NAME", "cardiffnlp/twitter-roberta-base-hate")
 
 
 class AnalyzeRequest(BaseModel):
@@ -23,17 +25,42 @@ class AnalyzeRequest(BaseModel):
     post_id: Optional[str] = None
 
 
+@lru_cache(maxsize=1)
+def _text_classifier():
+    from transformers import pipeline  # heavy import, deferred
+
+    return pipeline("text-classification", model=MODEL_NAME)
+
+
 def classify_text(text: str) -> dict:
-    """Return per-category scores in [0,1]. Replace with model inference."""
-    tokens = set(text.lower().split())
-    hits = len(tokens & HATE_TERMS)
-    score = min(1.0, hits * 0.4)
-    return {"hate": score}
+    """Return per-category scores in [0,1]."""
+    try:
+        clf = _text_classifier()
+    except ImportError:
+        # Stub for bring-up when transformers isn't installed.
+        tokens = set(text.lower().split())
+        hits = len(tokens & {"hate", "kill", "subhuman"})
+        return {"hate": min(1.0, hits * 0.4)}
+
+    result = clf(text, truncation=True)[0]
+    # cardiffnlp model labels: LABEL_0 = non-hate, LABEL_1 = hate
+    label = result["label"].lower()
+    if label in ("hate", "label_1"):
+        return {"hate": float(result["score"])}
+    return {"hate": float(1.0 - result["score"])}
 
 
 def transcribe(media_url: str) -> str:
-    """Transcribe audio/video via Whisper. Stub until model is wired in."""
-    raise NotImplementedError("Whisper transcription not yet configured")
+    """Transcribe audio/video via Whisper."""
+    try:
+        import whisper
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="Whisper not installed; audio/video transcription unavailable",
+        ) from exc
+    model = whisper.load_model(os.getenv("WHISPER_MODEL", "base"))
+    return model.transcribe(media_url)["text"]
 
 
 @app.get("/healthz")
