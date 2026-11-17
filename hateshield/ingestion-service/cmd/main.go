@@ -18,6 +18,7 @@ func env(key, fallback string) string {
 }
 
 var mlURL = env("ML_INFERENCE_URL", "http://localhost:9000")
+var moderationURL = env("MODERATION_URL", "http://localhost:8082")
 
 type AnalyzeRequest struct {
 	ContentType string `json:"content_type"` // text | audio | video
@@ -53,9 +54,26 @@ func analyze(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "failed reading ml response", http.StatusBadGateway)
+		return
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		var result AnalyzeResponse
+		if json.Unmarshal(respBody, &result) == nil && result.Flagged {
+			item, _ := json.Marshal(map[string]any{
+				"post_id": result.PostID,
+				"scores":  result.Scores,
+			})
+			go http.Post(moderationURL+"/v1/queue", "application/json", bytes.NewReader(item))
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.Write(respBody)
 }
 
 func main() {
