@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      INGESTION_URL: http://ingestion-service:8081
+      MODERATION_URL: http://moderation-service:8082
+    depends_on:
+      - ingestion-service
+      - moderation-service
+
+  ingestion-service:
+    build: ./ingestion-service
+    ports:
+      - "8081:8081"
+    environment:
+      ML_INFERENCE_URL: http://ml-inference:9000
+      MODERATION_URL: http://moderation-service:8082
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/hateshield?sslmode=disable
+    depends_on:
+      - postgres
+      - ml-inference
+
+  moderation-service:
+    build: ./moderation-service
+    ports:
+      - "8082:8082"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/hateshield?sslmode=disable
+      FEEDBACK_URL: http://feedback-service:8083
+    depends_on:
+      - postgres
+
+  feedback-service:
+    build: ./feedback-service
+    ports:
+      - "8083:8083"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/hateshield?sslmode=disable
+      LABELS_PATH: /data/labels.jsonl
+    volumes:
+      - labels:/data
+    depends_on:
+      - postgres
+
+  ml-inference:
+    build: ./ml-inference
+    ports:
+      - "9000:9000"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hateshield
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9002:9000"
+      - "9001:9001"
+
+volumes:
+  pgdata:
+  labels:

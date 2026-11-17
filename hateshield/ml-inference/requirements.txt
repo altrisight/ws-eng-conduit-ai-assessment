@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn>=0.29
+# add when wiring real models:
+# torch
+# transformers
+# openai-whisper
