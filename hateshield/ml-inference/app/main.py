@@ -7,6 +7,7 @@ dependencies are not installed the service falls back to a stub so the
 pipeline still works for bring-up.
 """
 import os
+import threading
 from functools import lru_cache
 from typing import Optional
 
@@ -30,6 +31,9 @@ def _text_classifier():
     from transformers import pipeline  # heavy import, deferred
 
     return pipeline("text-classification", model=MODEL_NAME)
+
+
+_whisper_lock = threading.Lock()
 
 
 @lru_cache(maxsize=1)
@@ -69,7 +73,10 @@ def transcribe(media_url: str) -> str:
             status_code=501,
             detail="Whisper not installed; audio/video transcription unavailable",
         ) from exc
-    return _whisper_model().transcribe(media_url)["text"]
+    # Whisper's kv-cache hooks are request-scoped on shared decoder layers, so
+    # concurrent transcriptions on one model corrupt each other — serialize.
+    with _whisper_lock:
+        return _whisper_model().transcribe(media_url)["text"]
 
 
 @app.get("/healthz")
