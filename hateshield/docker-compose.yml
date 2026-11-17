@@ -18,6 +18,7 @@ services:
       - "8081:8081"
     environment:
       ML_INFERENCE_URL: http://ml-inference:9000
+      MODERATION_URL: http://moderation-service:8082
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/hateshield?sslmode=disable
     depends_on:
       - postgres
@@ -29,6 +30,7 @@ services:
       - "8082:8082"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/hateshield?sslmode=disable
+      FEEDBACK_URL: http://feedback-service:8083
     depends_on:
       - postgres
 
@@ -38,6 +40,9 @@ services:
       - "8083:8083"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/hateshield?sslmode=disable
+      LABELS_PATH: /data/labels.jsonl
+    volumes:
+      - labels:/data
     depends_on:
       - postgres
 
@@ -68,3 +73,4 @@ services:
 
 volumes:
   pgdata:
+  labels:

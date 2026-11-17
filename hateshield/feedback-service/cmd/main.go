@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 )
+
+var labelsPath = os.Getenv("LABELS_PATH")
 
 type Label struct {
 	PostID  string `json:"post_id"`
@@ -26,6 +29,15 @@ func collect(w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	labels = append(labels, l)
+	if labelsPath != "" {
+		f, err := os.OpenFile(labelsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			log.Printf("persist label: %v", err)
+		} else {
+			json.NewEncoder(f).Encode(l)
+			f.Close()
+		}
+	}
 	mu.Unlock()
 	w.WriteHeader(http.StatusAccepted)
 }
