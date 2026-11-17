@@ -2,5 +2,4 @@ fastapi>=0.110
 uvicorn>=0.29
 torch
 transformers
-# optional, for audio/video transcription:
-# openai-whisper
+openai-whisper  # audio/video transcription
