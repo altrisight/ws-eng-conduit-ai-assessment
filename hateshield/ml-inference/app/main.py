@@ -32,6 +32,13 @@ def _text_classifier():
     return pipeline("text-classification", model=MODEL_NAME)
 
 
+@lru_cache(maxsize=1)
+def _whisper_model():
+    import whisper
+
+    return whisper.load_model(os.getenv("WHISPER_MODEL", "base"))
+
+
 def classify_text(text: str) -> dict:
     """Return per-category scores in [0,1]."""
     try:
@@ -42,7 +49,7 @@ def classify_text(text: str) -> dict:
         hits = len(tokens & {"hate", "kill", "subhuman"})
         return {"hate": min(1.0, hits * 0.4)}
 
-    result = clf(text, truncation=True)[0]
+    result = clf(text, truncation=True, max_length=512)[0]
     # cardiffnlp model labels: LABEL_0 = non-hate, LABEL_1 = hate
     label = result["label"].lower()
     if label in ("hate", "label_1"):
@@ -51,16 +58,18 @@ def classify_text(text: str) -> dict:
 
 
 def transcribe(media_url: str) -> str:
-    """Transcribe audio/video via Whisper."""
+    """Transcribe audio/video via Whisper. Only http(s) URLs are accepted so
+    callers cannot read local files or internal-only endpoints."""
+    if not media_url.startswith(("https://", "http://")):
+        raise HTTPException(status_code=400, detail="media_url must be an http(s) URL")
     try:
-        import whisper
+        import whisper  # noqa: F401
     except ImportError as exc:
         raise HTTPException(
             status_code=501,
             detail="Whisper not installed; audio/video transcription unavailable",
         ) from exc
-    model = whisper.load_model(os.getenv("WHISPER_MODEL", "base"))
-    return model.transcribe(media_url)["text"]
+    return _whisper_model().transcribe(media_url)["text"]
 
 
 @app.get("/healthz")
