@@ -5,6 +5,12 @@ import 'package:http/http.dart' as http;
 void main() => runApp(const HateShieldApp());
 
 const apiBase = String.fromEnvironment('API_BASE', defaultValue: 'http://localhost:8080');
+const apiToken = String.fromEnvironment('API_TOKEN', defaultValue: '');
+
+Map<String, String> get _headers => {
+      'Content-Type': 'application/json',
+      if (apiToken.isNotEmpty) 'Authorization': 'Bearer $apiToken',
+    };
 
 class HateShieldApp extends StatelessWidget {
   const HateShieldApp({super.key});
@@ -64,7 +70,7 @@ class _AnalyzePageState extends State<AnalyzePage> {
     try {
       final resp = await http.post(
         Uri.parse('$apiBase/v1/analyze'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers,
         body: jsonEncode(body),
       );
       setState(() => _result = resp.body);
@@ -131,7 +137,7 @@ class _QueuePageState extends State<QueuePage> {
   Future<void> _refresh() async {
     setState(() { _busy = true; _error = null; });
     try {
-      final resp = await http.get(Uri.parse('$apiBase/v1/queue'));
+      final resp = await http.get(Uri.parse('$apiBase/v1/queue'), headers: _headers);
       setState(() => _items = jsonDecode(resp.body) as List<dynamic>);
     } catch (e) {
       setState(() => _error = '$e');
@@ -148,7 +154,7 @@ class _QueuePageState extends State<QueuePage> {
     try {
       final resp = await http.post(
         Uri.parse('$apiBase/v1/feedback'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers,
         body: jsonEncode({'post_id': postId, 'label': label}),
       );
       if (resp.statusCode >= 400 && mounted) {

@@ -40,17 +40,19 @@ var (
 	queue = map[string]*QueueItem{}
 )
 
-func persist(it *QueueItem) {
+func persist(it *QueueItem) error {
 	if queuePath == "" {
-		return
+		return nil
 	}
 	f, err := os.OpenFile(queuePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		log.Printf("persist queue item: %v", err)
-		return
+		return err
 	}
 	defer f.Close()
-	json.NewEncoder(f).Encode(it)
+	if err := json.NewEncoder(f).Encode(it); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 // loadQueue replays the JSONL log; later records for a post_id win.
@@ -62,7 +64,15 @@ func loadQueue() {
 	if err != nil {
 		return
 	}
-	for _, line := range bytes.Split(data, []byte("\n")) {
+	lines := bytes.Split(data, []byte("\n"))
+	// A truncated final line (partial append) would join the next write to it;
+	// cut the file back to the last complete line.
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		lastNL := bytes.LastIndex(data, []byte("\n"))
+		os.Truncate(queuePath, int64(lastNL+1))
+		lines = lines[:len(lines)-1]
+	}
+	for _, line := range lines {
 		if len(line) == 0 {
 			continue
 		}
@@ -103,8 +113,12 @@ func enqueue(w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	it.Status = "pending"
+	if err := persist(it); err != nil {
+		mu.Unlock()
+		http.Error(w, "queue storage unavailable", http.StatusInternalServerError)
+		return
+	}
 	queue[it.PostID] = &it
-	persist(it)
 	mu.Unlock()
 	w.WriteHeader(http.StatusCreated)
 }
@@ -122,7 +136,11 @@ func submitFeedback(w http.ResponseWriter, r *http.Request) {
 		} else {
 			it.Status = "rejected"
 		}
-		persist(it)
+		if err := persist(it); err != nil {
+			mu.Unlock()
+			http.Error(w, "queue storage unavailable", http.StatusInternalServerError)
+			return
+		}
 	}
 	mu.Unlock()
 
